@@ -1,0 +1,5 @@
+mkdir working
+cd working
+mkdir 20260721_Plasmodium
+cd 20260721_Plasmodium
+bash fastp.sh
