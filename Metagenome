@@ -6,4 +6,5 @@ cd 20260721_Plasmodium
 bash fastp.sh
 mv /home/mzy/working/20260721_Plasmodium/01.qc_and_host_result/host_abundance_summary.tsv ../
 
-# 先进行配置 Kraken2 数据库，进行宏基因组比对物种鉴定
+# 宏基因组比对物种鉴定
+bash kraken2.sh 2>&1 | tee -a kraken2.log
