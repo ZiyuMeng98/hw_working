@@ -2,4 +2,8 @@ mkdir working
 cd working
 mkdir 20260721_Plasmodium
 cd 20260721_Plasmodium
+# 质控并过滤宿主序列
 bash fastp.sh
+mv /home/mzy/working/20260721_Plasmodium/01.qc_and_host_result/host_abundance_summary.tsv ../
+
+# 先进行配置 Kraken2 数据库，进行宏基因组比对物种鉴定
