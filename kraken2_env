@@ -1,0 +1,26 @@
+# 为全局配置能使用的 conda kraken2_env环境
+sudo $(which conda) create -p /opt/conda_envs/kraken2_env --override-channels -c conda-forge -c bioconda kraken2 bracken -y
+sudo chmod -R 755 /opt/conda_envs/kraken2_env
+
+# 将可执行文件软链接到系统公共 PATH 目录（/usr/local/bin）
+sudo ln -sf /opt/conda_envs/kraken2_env/bin/kraken2 /usr/local/bin/
+sudo ln -sf /opt/conda_envs/kraken2_env/bin/kraken2-build /usr/local/bin/
+sudo ln -sf /opt/conda_envs/kraken2_env/bin/bracken /usr/local/bin/
+sudo ln -sf /opt/conda_envs/kraken2_env/bin/bracken-build /usr/local/bin/
+
+# 1. 创建公共数据库文件夹
+sudo mkdir -p /data/database/kraken2
+sudo chmod 755 /data/database/kraken2
+
+# 下载通用版PlusPF
+# 例如下载并解压官方预建库到公共目录：
+cd /data/database/kraken2
+# (这里以下载 Kraken2 官方标准库/PlusPF 库为例，解压后所有人都能读)
+# 1. 下载预建库压缩包 (PlusPF-16GB)
+sudo wget -c https://genome-idx.s3.amazonaws.com/kraken/k2_pluspf_16gb_20240904.tar.gz
+
+# 2. 解压到当前文件夹
+sudo tar -xzvf k2_pluspf_16gb_20240904.tar.gz
+
+# 3. 解压完成后删除压缩包，节省磁盘空间
+sudo rm k2_pluspf_16gb_20240904.tar.gz
