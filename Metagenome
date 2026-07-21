@@ -10,5 +10,5 @@ mv /home/mzy/working/20260721_Plasmodium/01.qc_and_host_result/host_abundance_su
 bash kraken2.sh 2>&1 | tee -a kraken2.log
 
 # 评估物种相对丰度
-sudo conda create -p /opt/conda/envs/bracken_env -c conda-forge -c bioconda bracken
-sudo chmod -R 755 /opt/conda/envs/bracken_env
+zcat FIBY260000681-1A_L8_1.fq.gz | head -n 4 | sed -n '2p' | awk '{print length($0)}' # 查看读长，修改脚本命令行
+bash bracken.sh 2>&1 | tee -a bracken.log
