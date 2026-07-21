@@ -8,3 +8,7 @@ mv /home/mzy/working/20260721_Plasmodium/01.qc_and_host_result/host_abundance_su
 
 # 宏基因组比对物种鉴定
 bash kraken2.sh 2>&1 | tee -a kraken2.log
+
+# 评估物种相对丰度
+sudo conda create -p /opt/conda/envs/bracken_env -c conda-forge -c bioconda bracken
+sudo chmod -R 755 /opt/conda/envs/bracken_env
