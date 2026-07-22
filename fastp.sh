@@ -2,8 +2,8 @@
 
 DATA_DIR="/data1/guojie/project/tianjing/ccy"
 OUT_DIR="/home/mzy/working/20260721_Plasmodium/01.qc_and_host_result"
-LOG_DIR="/home/mzy/working/20260721_Plasmodium/logs"
-REPORT_DIR="/home/mzy/working/20260721_Plasmodium/reports"
+LOG_DIR="/home/mzy/working/20260721_Plasmodium/01.qc_and_host_result_logs"
+REPORT_DIR="/home/mzy/working/20260721_Plasmodium/01.qc_and_host_result_reports"
 
 HUMAN_INDEX="/data/database/GRCh38/GRCh38"
 THREADS=32
