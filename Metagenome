@@ -1,7 +1,11 @@
 mkdir working
-cd working
+cd /home/mzy/working
 mkdir 20260721_Plasmodium
-cd 20260721_Plasmodium
+
+cd /data/database/GRCh38/
+# 构建人类宿主参考基因组索引，用于bowtie2比对
+conda run -n bowtie2_env bowtie2-build --threads 32 /data/database/GRCh38/GRCh38.p14.genome.fa /data/database/GRCh38/GRCh38
+cd /home/mzy/working/20260721_Plasmodium
 # 质控并过滤宿主序列
 bash fastp.sh
 mv /home/mzy/working/20260721_Plasmodium/01.qc_and_host_result/host_abundance_summary.tsv ../
