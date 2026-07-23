@@ -1,5 +1,5 @@
 # 为全局配置能使用的 conda kraken2_env环境
-sudo $(which conda) create -p /opt/conda_envs/kraken2_env --override-channels -c conda-forge -c bioconda kraken2 bracken -y
+sudo $(which conda) create -p /opt/conda_envs/kraken2_env --override-channels -c conda-forge -c bioconda kraken2 bracken kronas -y
 sudo chmod -R 755 /opt/conda_envs/kraken2_env
 
 # 将可执行文件软链接到系统公共 PATH 目录（/usr/local/bin）
