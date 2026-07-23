@@ -7,8 +7,13 @@ cd /data/database/GRCh38/
 conda run -n bowtie2_env bowtie2-build --threads 32 /data/database/GRCh38/GRCh38.p14.genome.fa /data/database/GRCh38/GRCh38
 cd /home/mzy/working/20260721_Plasmodium
 # 质控并过滤宿主序列
-bash fastp.sh
-mv /home/mzy/working/20260721_Plasmodium/01.qc_and_host_result/host_abundance_summary.tsv ../
+bash qc_and_host.sh 2>&1 | tee -a qc_and_host.log
+mv 01.qc_and_host_result_* reports/
+mv host_abundance_summary.tsv reports/
+cd reports/
+mkdir 01.qc_reports
+mv *_fastp.* 01.qc_reports
+cd ../
 
 # 宏基因组比对物种鉴定
 bash kraken2.sh 2>&1 | tee -a kraken2.log
