@@ -1,8 +1,8 @@
 #!/bin/bash
 
-INPUT_DIR="/home/mzy/working/20260721_Plasmodium/01.qc_and_host_result"
-OUTPUT_DIR="/home/mzy/working/20260721_Plasmodium/02.kraken2_result"
-DB_PATH="/data/database/kraken2_db/k2_pluspf_16gb"
+INPUT_DIR="/home/user/working/01.qc_and_host_result"
+OUTPUT_DIR="/home/user/working/02.kraken2_result"
+DB_PATH="/home/user/database/kraken2_db/k2_pluspf_16gb/"
 
 THREADS=32
 CONFIDENCE=0.1
@@ -19,18 +19,37 @@ echo "=================================================="
 for SAMPLE_DIR in "$INPUT_DIR"/*/ ; do
     [ -d "$SAMPLE_DIR" ] || continue
 
-    # Get sample_id from folder name
     sample_id=$(basename "$SAMPLE_DIR")
-
     echo -e "\n[$(date +'%Y-%m-%d %H:%M:%S')] Processing sample: ${sample_id} ..."
 
-    r1_file=$(ls "$SAMPLE_DIR"/*_1.fastq.gz "$SAMPLE_DIR"/*_R1.fastq.gz "$SAMPLE_DIR"/*_1.fq.gz "$SAMPLE_DIR"/*_1.clean.fq.gz 2>/dev/null | head -n 1)
-    r2_file=$(ls "$SAMPLE_DIR"/*_2.fastq.gz "$SAMPLE_DIR"/*_R2.fastq.gz "$SAMPLE_DIR"/*_2.fq.gz "$SAMPLE_DIR"/*_2.clean.fq.gz 2>/dev/null | head -n 1)
+    # 定位 R1 文件
+    r1_file=$(ls "$SAMPLE_DIR"/*parasite*{_1,_R1}*.{fq,fastq}.gz 2>/dev/null | head -n 1)
+
+    # 动态替换获取 R2 文件名
+    if [[ "$r1_file" == *"_1."* ]]; then
+        r2_file="${r1_file/_1./_2.}"
+    elif [[ "$r1_file" == *"_R1."* ]]; then
+        r2_file="${r1_file/_R1./_R2.}"
+    elif [[ "$r1_file" == *"_1_"* ]]; then
+        r2_file="${r1_file/_1_/_2_}"
+    elif [[ "$r1_file" == *"_R1_"* ]]; then
+        r2_file="${r1_file/_R1_/_R2_}"
+    fi
 
     echo "  Found R1: $r1_file"
     echo "  Found R2: $r2_file"
 
-    conda run -n kraken2_env kraken2 --db "$DB_PATH" --threads "$THREADS" --paired --use-names --confidence "$CONFIDENCE" --report "$OUTPUT_DIR/${sample_id}.kreport" --output "$OUTPUT_DIR/${sample_id}.kraken" "$r1_file" "$r2_file"
+    # 执行 Kraken2
+    conda run -n kraken2_env kraken2 \
+        --db "$DB_PATH" \
+        --threads "$THREADS" \
+        --paired \
+        --use-names \
+        --gzip-compressed \
+        --confidence "$CONFIDENCE" \
+        --report "$OUTPUT_DIR/${sample_id}.kreport" \
+        --output "$OUTPUT_DIR/${sample_id}.kraken" \
+        "$r1_file" "$r2_file"
 
     echo "sample name: ${sample_id} finished"
     echo "report file: $OUTPUT_DIR/${sample_id}.kreport"
