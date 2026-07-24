@@ -9,7 +9,7 @@ THREADS=16
 MEMORY=64
 
 # 样本列表（替换为你两个阳性样本的名称前缀）
-SAMPLES=("SAMPLE_1" "SAMPLE_2")
+SAMPLES=("CX2628" "NY2621")
 
 # 目录设定
 DATA_DIR="/home/user/working/20260721_Plasmodium/01.qc_and_host_result"       # 去除宿主后的 FASTQ 目录
@@ -45,7 +45,7 @@ for SAMPLE in "${SAMPLES[@]}"; do
     #      P. falciparum (5833)、P. reichenowi (5855) 及所有子分类 Reads。
     echo ">>> [1/4] getting (Plasmodium spp.) reads..."
     
-    extract_kraken_reads.py -k ${KRAKEN_OUT} -r ${KREPORT_OUT} -s1 ${R1_IN} -s2 ${R2_IN} -t 5820 --include-children -o ${SAMPLE}_plasmodium_R1.fastq -o2 ${SAMPLE}_plasmodium_R2.fastq --fastq-output
+    conda run -n metagenomics_env extract_kraken_reads.py -k ${KRAKEN_OUT} -r ${KREPORT_OUT} -s1 ${R1_IN} -s2 ${R2_IN} -t 5820 --include-children -o ${SAMPLE}_plasmodium_R1.fastq -o2 ${SAMPLE}_plasmodium_R2.fastq --fastq-output
 
     # 压缩提取出的 FASTQ 备用
     gzip -f ${SAMPLE}_plasmodium_R1.fastq
@@ -70,10 +70,10 @@ for SAMPLE in "${SAMPLES[@]}"; do
     #      如果读段深度不高，建议使用常规模式或 --meta 模式。
     echo ">>> [2/4] 正在进行 SPAdes 基因组组装..."
     
-    spades.py --meta -1 ${P_R1} -2 ${P_R2} -o ${SAMPLE_OUT}/spades_out -t ${THREADS} -m ${MEMORY}
+    conda run -n metagenomics_env spades.py --meta -1 ${P_R1} -2 ${P_R2} -o ${SAMPLE_OUT}/spades_out -t ${THREADS} -m ${MEMORY}
 
     # 过滤掉较短的 contigs (例如 < 500 bp)
-    seqkit seq -m 500 ${SAMPLE_OUT}/spades_out/contigs.fasta > ${SAMPLE_OUT}/${SAMPLE}_contigs_500bp.fasta
+    conda run -n metagenomics_env seqkit seq -m 500 ${SAMPLE_OUT}/spades_out/contigs.fasta > ${SAMPLE_OUT}/${SAMPLE}_contigs_500bp.fasta
 
     # --------------------------------------------------
     # Step 3: 参考基因组引导的 Scaffold 搭建 (RagTag)
@@ -82,7 +82,7 @@ for SAMPLE in "${SAMPLES[@]}"; do
     #      使用 P. falciparum 3D7 参考基因组可以将 Contigs 贴到染色体水平。
     echo ">>> [3/4] 使用 RagTag 进行参考基因组指导的染色体构建..."
     
-    ragtag.py scaffold ${REF_FASTA} ${SAMPLE_OUT}/${SAMPLE}_contigs_500bp.fasta -o ${SAMPLE_OUT}/ragtag_out -t ${THREADS}
+    conda run -n metagenomics_env ragtag.py scaffold ${REF_FASTA} ${SAMPLE_OUT}/${SAMPLE}_contigs_500bp.fasta -o ${SAMPLE_OUT}/ragtag_out -t ${THREADS}
 
     cp ${SAMPLE_OUT}/ragtag_out/ragtag.scaffold.fasta ${SAMPLE_OUT}/${SAMPLE}_final_scaffolds.fasta
 
@@ -91,7 +91,7 @@ for SAMPLE in "${SAMPLES[@]}"; do
     # --------------------------------------------------
     echo ">>> [4/4] 使用 QUAST 评估组装质量..."
     
-    quast.py ${SAMPLE_OUT}/${SAMPLE}_final_scaffolds.fasta -r ${REF_FASTA} -o ${SAMPLE_OUT}/quast_out -t ${THREADS}
+    conda run -n metagenomics_env quast.py ${SAMPLE_OUT}/${SAMPLE}_final_scaffolds.fasta -r ${REF_FASTA} -o ${SAMPLE_OUT}/quast_out -t ${THREADS}
 
     echo "sample: ${SAMPLE} finished!location: ${SAMPLE_OUT}"
     cd ${OUT_DIR}
