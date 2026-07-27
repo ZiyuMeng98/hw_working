@@ -32,5 +32,12 @@ conda run -n kraken2_env ktImportTaxonomy -q 2 -t 3 /home/user/working/03.bracke
 # 使用方法： 将生成的 krona_abundance_summary.html 文件下载到本地电脑，双击用
 bash get_reads_assembly.sh 2>&1 | tee -a get_reads_assembly.log
 
-# 分别对组装结果blast（这次原始数据reads太少，没能组装成全基因组）
-blastn -query NY2621_contigs_500bp.fasta -db nt -remote -outfmt "6 qseqid sseqid pident length ... sscinames" -max_target_seqs 5 -out blast_results.tsv > blast.log 2>&1 &
+# 分别对组装结果blast（这次原始数据reads太少，没能组装成全基因组，使用本地BLAST）
+conda run -n blast_env blastn \
+    -query NY2621_contigs_500bp.fasta \
+    -db /data1/database/core_nt/core_nt \
+    -taxids 5820 \
+    -outfmt "6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore sscinames" \
+    -max_target_seqs 5 \
+    -num_threads 16 \
+    -out NY2621_blast_results.tsv > NY2621_blast.log 2>&1 &
