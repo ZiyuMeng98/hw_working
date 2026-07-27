@@ -1,0 +1,8 @@
+# 批量命名样本，转移原始文件
+for file in *_R1.fq.gz; do
+    sample="${file%_R1.fq.gz}"
+    mkdir -p "$sample"
+    mv "${sample}_R1.fq.gz" "${sample}_R2.fq.gz" "$sample/"
+done
+
+bash fastqc.sh 2>&1 | tee -a fastqc.log
