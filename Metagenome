@@ -31,3 +31,6 @@ conda run -n kraken2_env ktUpdateTaxonomy.sh
 conda run -n kraken2_env ktImportTaxonomy -q 2 -t 3 /home/user/working/03.bracken_result/*_bracken.kreport -o /home/user/working/03.bracken_result/krona_abundance_summary.html
 # 使用方法： 将生成的 krona_abundance_summary.html 文件下载到本地电脑，双击用
 bash get_reads_assembly.sh 2>&1 | tee -a get_reads_assembly.log
+
+# 分别对组装结果blast（这次原始数据reads太少，没能组装成全基因组）
+blastn -query NY2621_contigs_500bp.fasta -db nt -remote -outfmt "6 qseqid sseqid pident length ... sscinames" -max_target_seqs 5 -out blast_results.tsv > blast.log 2>&1 &
