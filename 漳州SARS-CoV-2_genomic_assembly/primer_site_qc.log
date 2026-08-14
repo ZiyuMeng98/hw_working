@@ -1,0 +1,267 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+SAMPLE_LIST="/home/mzy/working/20260812_SARS_Cov/samples.txt"
+
+REF_FA="/home/mzy/reference/MN908947.3/MN908947.3.fa"
+PRIMER_BED="/home/mzy/working/20260730_20260723_12sample_XG/SARS_CoV_V5.4.2_new.bed"
+
+LOW_TSV="/home/mzy/working/20260812_SARS_Cov/04.depth_qc/low_coverage_amplicons.tsv"
+RAW_ROOT="/home/mzy/working/20260812_SARS_Cov/02.minimap2"
+OUT_ROOT="/home/mzy/working/20260812_SARS_Cov/05.primer_site_qc"
+LOG_ROOT="/home/mzy/working/20260812_SARS_Cov2/05.primer_site_qc"
+
+SAMTOOLS_BIN="${SAMTOOLS_BIN:-/home/mzy/.conda/envs/covid_amplicon/bin/samtools}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+
+MIN_DEPTH="${MIN_DEPTH:-1}"
+MIN_ALT_FREQ="${MIN_ALT_FREQ:-0.20}"
+
+mkdir -p "${OUT_ROOT}" "${LOG_ROOT}"
+
+if [[ ! -s "${REF_FA}" ]]; then
+  echo "[ERROR] reference FASTA not found: ${REF_FA}" >&2
+  exit 1
+fi
+
+if [[ ! -s "${PRIMER_BED}" ]]; then
+  echo "[ERROR] primer BED not found: ${PRIMER_BED}" >&2
+  exit 1
+fi
+
+if [[ ! -s "${LOW_TSV}" ]]; then
+  echo "[ERROR] low coverage table not found: ${LOW_TSV}" >&2
+  exit 1
+fi
+
+if [[ ! -x "${SAMTOOLS_BIN}" ]]; then
+  echo "[ERROR] samtools not executable: ${SAMTOOLS_BIN}" >&2
+  exit 1
+fi
+
+if [[ ! -s "${REF_FA}.fai" ]]; then
+  "${SAMTOOLS_BIN}" faidx "${REF_FA}"
+fi
+
+ALL_QC="${OUT_ROOT}/all_samples.primer_site_qc.tsv"
+POSSIBLE_MUT="${OUT_ROOT}/possible_primer_binding_mutations.tsv"
+
+echo -e "sample\tamplicon\tprimer\tchrom\tpos\tref_base\tdepth\tA\tC\tG\tT\tN\tmajor_base\tmajor_count\tmajor_freq\talt_base\talt_count\talt_freq\tflag" > "${ALL_QC}"
+
+while IFS= read -r sample || [[ -n "${sample}" ]]; do
+  [[ -z "${sample}" || "${sample}" =~ ^# ]] && continue
+
+  echo "[INFO] processing ${sample}"
+
+  raw_bam="${RAW_ROOT}/${sample}/${sample}.raw.sorted.bam"
+  outdir="${OUT_ROOT}/${sample}"
+
+  mkdir -p "${outdir}"
+
+  if [[ ! -s "${raw_bam}" ]]; then
+    echo "[ERROR] raw BAM not found: ${raw_bam}" >&2
+    exit 1
+  fi
+
+  low_primer_bed="${outdir}/${sample}.low_amplicon_primers.bed"
+  mpileup_tsv="${outdir}/${sample}.primer_site.raw.mpileup.tsv"
+  qc_tsv="${outdir}/${sample}.primer_site_qc.tsv"
+
+  # 从 LOW/WARNING 扩增子中提取对应 primer 区域。
+  "${PYTHON_BIN}" - "${sample}" "${LOW_TSV}" "${PRIMER_BED}" "${low_primer_bed}" <<'PY'
+import re
+import sys
+
+sample, low_tsv, primer_bed, out_bed = sys.argv[1:5]
+
+def amp_id(text):
+    # 优先匹配 amplicon_10 或 amplicon-10
+    m = re.search(r"amplicon[_-](\d+)", text, re.I)
+    if m:
+        return int(m.group(1))
+    
+    # 精准匹配位于 LEFT/RIGHT 前面的扩增子编号（跳过前面的 V5.4.2）
+    m = re.search(r"[_-](\d+)[_-](?:LEFT|RIGHT|F|R|alt|v)", text, re.I)
+    if m:
+        return int(m.group(1))
+    
+    # 备用方案：取最后一个数字
+    nums = re.findall(r"\d+", text)
+    if nums:
+        return int(nums[-1])
+        
+    return None
+
+low_amps = set()
+
+with open(low_tsv, "r", encoding="utf-8") as f:
+    header = f.readline().rstrip("\n").split("\t")
+    idx_sample = header.index("sample")
+    idx_amp = header.index("amplicon")
+    idx_status = header.index("status")
+
+    for line in f:
+        cols = line.rstrip("\n").split("\t")
+        if cols[idx_sample] != sample:
+            continue
+        if cols[idx_status] not in {"LOW", "WARNING"}:
+            continue
+        aid = amp_id(cols[idx_amp])
+        if aid is not None:
+            low_amps.add(aid)
+
+with open(primer_bed, "r", encoding="utf-8") as f, open(out_bed, "w", encoding="utf-8") as out:
+    for line in f:
+        if not line.strip() or line.startswith("#"):
+            continue
+
+        cols = line.rstrip("\n").split("\t")
+        if len(cols) < 4:
+            continue
+
+        name = cols[3]
+        aid = amp_id(name)
+
+        if aid in low_amps:
+            out.write(line)
+PY
+
+  if [[ ! -s "${low_primer_bed}" ]]; then
+    echo "[WARN] no LOW/WARNING amplicon primers for ${sample}, skipped"
+    continue
+  fi
+
+  # raw BAM 保留引物区域，用它检查 primer-binding site。
+  "${SAMTOOLS_BIN}" mpileup \
+    -aa \
+    -A \
+    -Q 0 \
+    -d 0 \
+    -f "${REF_FA}" \
+    -l "${low_primer_bed}" \
+    "${raw_bam}" \
+    > "${mpileup_tsv}"
+
+  "${PYTHON_BIN}" - "${sample}" "${low_primer_bed}" "${mpileup_tsv}" "${qc_tsv}" "${MIN_DEPTH}" "${MIN_ALT_FREQ}" <<'PY'
+import re
+import sys
+
+sample, primer_bed, mpileup_tsv, out_tsv, min_depth, min_alt_freq = sys.argv[1:7]
+min_depth = int(min_depth)
+min_alt_freq = float(min_alt_freq)
+
+primer_by_pos = {}
+
+def amp_id(text):
+    m = re.search(r"amplicon[_-](\d+)", text, re.I)
+    if m:
+        return f"amplicon_{m.group(1)}"
+        
+    m = re.search(r"[_-](\d+)[_-](?:LEFT|RIGHT|F|R|alt|v)", text, re.I)
+    if m:
+        return f"amplicon_{m.group(1)}"
+        
+    nums = re.findall(r"\d+", text)
+    if nums:
+        return f"amplicon_{nums[-1]}"
+        
+    return "NA"
+
+with open(primer_bed, "r", encoding="utf-8") as f:
+    for line in f:
+        cols = line.rstrip("\n").split("\t")
+        chrom, start, end, name = cols[:4]
+        start = int(start)
+        end = int(end)
+
+        # BED 是 0-based half-open；mpileup 是 1-based。
+        for pos in range(start + 1, end + 1):
+            primer_by_pos[(chrom, pos)] = name
+
+def parse_bases(bases, ref):
+    counts = {"A": 0, "C": 0, "G": 0, "T": 0, "N": 0}
+    i = 0
+    ref = ref.upper()
+
+    while i < len(bases):
+        b = bases[i]
+
+        if b == "^":
+            i += 2
+            continue
+
+        if b == "$":
+            i += 1
+            continue
+
+        if b in "+-":
+            i += 1
+            num = ""
+            while i < len(bases) and bases[i].isdigit():
+                num += bases[i]
+                i += 1
+            if num:
+                i += int(num)
+            continue
+
+        if b in ".,=":
+            counts[ref] = counts.get(ref, 0) + 1
+        elif b.upper() in counts:
+            counts[b.upper()] += 1
+
+        i += 1
+
+    return counts
+
+with open(out_tsv, "w", encoding="utf-8") as out:
+    out.write("sample\tamplicon\tprimer\tchrom\tpos\tref_base\tdepth\tA\tC\tG\tT\tN\tmajor_base\tmajor_count\tmajor_freq\talt_base\talt_count\talt_freq\tflag\n")
+
+    with open(mpileup_tsv, "r", encoding="utf-8") as f:
+        for line in f:
+            cols = line.rstrip("\n").split("\t")
+            if len(cols) < 5:
+                continue
+
+            chrom = cols[0]
+            pos = int(cols[1])
+            ref = cols[2].upper()
+            depth = int(cols[3])
+            bases = cols[4]
+
+            primer = primer_by_pos.get((chrom, pos), "NA")
+            counts = parse_bases(bases, ref)
+
+            ordered = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+            major_base, major_count = ordered[0]
+            alt_candidates = [(b, c) for b, c in ordered if b != ref]
+            alt_base, alt_count = alt_candidates[0] if alt_candidates else ("NA", 0)
+
+            major_freq = major_count / depth if depth else 0
+            alt_freq = alt_count / depth if depth else 0
+
+            if depth < min_depth:
+                flag = "LOW_DEPTH_AT_PRIMER_SITE"
+            elif alt_freq >= min_alt_freq:
+                flag = "POSSIBLE_PRIMER_BINDING_MUTATION"
+            else:
+                flag = "PASS"
+
+            out.write(
+                f"{sample}\t{amp_id(primer)}\t{primer}\t{chrom}\t{pos}\t{ref}\t{depth}\t"
+                f"{counts['A']}\t{counts['C']}\t{counts['G']}\t{counts['T']}\t{counts['N']}\t"
+                f"{major_base}\t{major_count}\t{major_freq:.4f}\t"
+                f"{alt_base}\t{alt_count}\t{alt_freq:.4f}\t{flag}\n"
+            )
+PY
+
+  tail -n +2 "${qc_tsv}" >> "${ALL_QC}"
+
+  echo "[INFO] finished ${sample}"
+done < "${SAMPLE_LIST}"
+
+awk 'NR == 1 || $19 != "PASS"' "${ALL_QC}" > "${POSSIBLE_MUT}"
+
+echo "[INFO] all primer-site QC: ${ALL_QC}"
+echo "[INFO] possible primer-binding problems: ${POSSIBLE_MUT}"
