@@ -1,0 +1,527 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+SAMPLE_LIST="/home/mzy/working/20260810_20260716_Cov2/samples.txt"
+
+REF_FA="/home/mzy/reference/MN908947.3/MN908947.3.fa"
+PRIMER_BED="/home/mzy/working/20260730_20260723_12sample_XG/SARS_CoV_V5.4.2_new.bed"
+
+LOW_TSV="${LOW_TSV:-04.depth_qc/low_coverage_amplicons.tsv}"
+
+RAW_ROOT="/home/mzy/working/20260810_20260716_Cov2/02.minimap2"
+TRIM_ROOT="/home/mzy/working/20260810_20260716_Cov2/03.ivar_trim"
+OUT_ROOT="/home/mzy/working/20260810_20260716_Cov2/08.low_amplicon_mutation_qc"
+LOG_ROOT="/home/mzy/working/20260810_20260716_Cov2/08.low_amplicon_mutation_qc"
+
+SAMTOOLS_BIN="${SAMTOOLS_BIN:-/home/user/miniconda3/envs/samtools_env/bin/samtools}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+
+# 过滤及诊断参数
+FLANK="${FLANK:-20}"
+MIN_DEPTH="${MIN_DEPTH:-10}"
+MIN_ALT_FREQ="${MIN_ALT_FREQ:-0.30}"   # 提高至 0.30 减少低深度下的假阳性
+MIN_ALT_COUNT="${MIN_ALT_COUNT:-3}"    # 增加最小支持突变 reads 数
+MIN_BASE_Q="${MIN_BASE_Q:-15}"         # mpileup 过滤碱基质量，避免 -Q 0 的噪音
+
+mkdir -p "${OUT_ROOT}" "${LOG_ROOT}"
+
+if [[ ! -s "${SAMPLE_LIST}" ]]; then
+  echo "[ERROR] sample list not found: ${SAMPLE_LIST}" >&2
+  exit 1
+fi
+
+if [[ ! -s "${REF_FA}" ]]; then
+  echo "[ERROR] reference FASTA not found: ${REF_FA}" >&2
+  exit 1
+fi
+
+if [[ ! -s "${PRIMER_BED}" ]]; then
+  echo "[ERROR] primer BED not found: ${PRIMER_BED}" >&2
+  exit 1
+fi
+
+if [[ ! -s "${LOW_TSV}" ]]; then
+  echo "[ERROR] low coverage table not found: ${LOW_TSV}" >&2
+  exit 1
+fi
+
+if [[ ! -x "${SAMTOOLS_BIN}" ]]; then
+  echo "[ERROR] samtools not executable: ${SAMTOOLS_BIN}" >&2
+  exit 1
+fi
+
+if [[ ! -s "${REF_FA}.fai" ]]; then
+  "${SAMTOOLS_BIN}" faidx "${REF_FA}"
+fi
+
+ALL_PRIMER_MUT="${OUT_ROOT}/all_samples.low_amplicon_primer_region_mutations.tsv"
+ALL_BODY_MUT="${OUT_ROOT}/all_samples.low_amplicon_body_mutations.tsv"
+ALL_DIAGNOSIS="${OUT_ROOT}/all_samples.low_amplicon_mutation_diagnosis.tsv"
+
+echo -e "sample\tamplicon\tregion_type\tprimer\tchrom\tpos\tref_base\tdepth\tA\tC\tG\tT\tN\talt_base\talt_count\talt_freq\tflag" > "${ALL_PRIMER_MUT}"
+echo -e "sample\tamplicon\tchrom\tpos\tref_base\tdepth\tA\tC\tG\tT\tN\talt_base\talt_count\talt_freq\tflag" > "${ALL_BODY_MUT}"
+echo -e "sample\tamplicon\tstatus\tprimer_region_mutation_sites\tbody_mutation_sites\tlow_depth_primer_sites\tdiagnosis" > "${ALL_DIAGNOSIS}"
+
+while IFS= read -r sample || [[ -n "${sample}" ]]; do
+  [[ -z "${sample}" || "${sample}" =~ ^# ]] && continue
+
+  echo "[INFO] processing ${sample}"
+
+  outdir="${OUT_ROOT}/${sample}"
+  mkdir -p "${outdir}"
+
+  raw_bam="${RAW_ROOT}/${sample}/${sample}.raw.sorted.bam"
+  trim_bam="${TRIM_ROOT}/${sample}/${sample}.trimmed.sorted.bam"
+
+  if [[ ! -s "${raw_bam}" ]]; then
+    echo "[ERROR] raw BAM not found: ${raw_bam}" >&2
+    exit 1
+  fi
+
+  if [[ ! -s "${trim_bam}" ]]; then
+    echo "[ERROR] trimmed BAM not found: ${trim_bam}" >&2
+    exit 1
+  fi
+
+  "${SAMTOOLS_BIN}" quickcheck -v "${raw_bam}" "${trim_bam}"
+
+  low_amp_bed="${outdir}/${sample}.low_amplicons.bed"
+  low_primer_flank_bed="${outdir}/${sample}.low_amplicon_primers.flank${FLANK}.bed"
+
+  raw_mpileup="${outdir}/${sample}.primer_region.raw.mpileup.tsv"
+  trim_mpileup="${outdir}/${sample}.body.trimmed.mpileup.tsv"
+
+  primer_mut_tsv="${outdir}/${sample}.low_amplicon_primer_region_mutations.tsv"
+  body_mut_tsv="${outdir}/${sample}.low_amplicon_body_mutations.tsv"
+  diagnosis_tsv="${outdir}/${sample}.low_amplicon_mutation_diagnosis.tsv"
+
+  # 生成两个 BED：
+  # 1. 低覆盖 amplicon body 区域
+  # 2. 低覆盖 amplicon 对应 primer 区域，并向两侧扩展 FLANK bp
+  "${PYTHON_BIN}" - \
+    "${sample}" \
+    "${LOW_TSV}" \
+    "${PRIMER_BED}" \
+    "${low_amp_bed}" \
+    "${low_primer_flank_bed}" \
+    "${FLANK}" <<'PY'
+import re
+import sys
+
+sample, low_tsv, primer_bed, out_amp_bed, out_primer_bed, flank = sys.argv[1:7]
+flank = int(flank)
+
+# 动态获取默认染色体名（优先从 primer_bed 提取）
+default_chrom = "MN908947.3"
+with open(primer_bed, "r", encoding="utf-8-sig") as f:
+    for line in f:
+        if line.strip() and not line.startswith("#"):
+            default_chrom = line.split("\t")[0]
+            break
+
+def amp_num_from_amplicon(text):
+    m = re.search(r"amplicon[_-](\d+)", text, re.I)
+    if m:
+        return int(m.group(1))
+    m = re.search(r"(\d+)", text)
+    if m:
+        return int(m.group(1))
+    return None
+
+def amp_num_from_primer(name):
+    patterns = [
+        r"amplicon[_-](\d+)",
+        r"SARS-CoV-2[_-](\d+)[_-](?:LEFT|RIGHT)",
+        r"SARS-CoV-2[_-](\d+)[_-]",
+        r"amp[_-]?(\d+)",
+    ]
+    for pat in patterns:
+        m = re.search(pat, name, re.I)
+        if m:
+            return int(m.group(1))
+    return None
+
+low_amps = {}
+
+with open(low_tsv, "r", encoding="utf-8-sig") as f:
+    header = f.readline().rstrip("\n").split("\t")
+    idx = {k.lower().strip(): i for i, k in enumerate(header)}
+
+    sample_i = idx.get("sample")
+    status_i = idx.get("status")
+    amp_i = idx.get("amplicon")
+    start_i = idx.get("start")
+    end_i = idx.get("end")
+    chrom_i = idx.get("chrom") or idx.get("chr") or idx.get("ref")
+
+    for line in f:
+        cols = line.rstrip("\n").split("\t")
+        if len(cols) <= max([i for i in [sample_i, status_i, amp_i, start_i, end_i] if i is not None]):
+            continue
+
+        if cols[sample_i] != sample:
+            continue
+
+        status = cols[status_i]
+        if status not in {"LOW", "WARNING"}:
+            continue
+
+        amp = cols[amp_i]
+        amp_num = amp_num_from_amplicon(amp)
+        chrom = cols[chrom_i] if (chrom_i is not None and chrom_i < len(cols)) else default_chrom
+        start_1based = int(cols[start_i])
+        end_1based = int(cols[end_i])
+
+        low_amps[amp_num] = {
+            "amp": amp,
+            "status": status,
+            "chrom": chrom,
+            "start0": start_1based - 1,
+            "end0": end_1based,
+        }
+
+with open(out_amp_bed, "w", encoding="utf-8") as out:
+    for amp_num in sorted(low_amps):
+        x = low_amps[amp_num]
+        out.write(f"{x['chrom']}\t{x['start0']}\t{x['end0']}\t{x['amp']}\t{x['status']}\n")
+
+with open(primer_bed, "r", encoding="utf-8-sig") as f, open(out_primer_bed, "w", encoding="utf-8") as out:
+    for line in f:
+        if not line.strip() or line.startswith("#"):
+            continue
+
+        cols = line.rstrip("\n").split("\t")
+        if len(cols) < 4:
+            continue
+
+        chrom = cols[0]
+        start = int(cols[1])
+        end = int(cols[2])
+        name = cols[3]
+        pool = cols[4] if len(cols) >= 5 else "NA"
+        strand = cols[5] if len(cols) >= 6 else "."
+
+        amp_num = amp_num_from_primer(name)
+
+        if amp_num in low_amps:
+            s = max(0, start - flank)
+            e = end + flank
+            amp = low_amps[amp_num]["amp"]
+            status = low_amps[amp_num]["status"]
+            out.write(f"{chrom}\t{s}\t{e}\t{name}\t{amp}\t{status}\t{pool}\t{strand}\n")
+PY
+
+  if [[ ! -s "${low_amp_bed}" ]]; then
+    echo "[WARN] no LOW/WARNING amplicons for ${sample}, skipped"
+    continue
+  fi
+
+  # raw BAM 用于 primer 区域
+  "${SAMTOOLS_BIN}" mpileup \
+    -aa \
+    -A \
+    -Q "${MIN_BASE_Q}" \
+    -d 0 \
+    -f "${REF_FA}" \
+    -l "${low_primer_flank_bed}" \
+    "${raw_bam}" \
+    > "${raw_mpileup}"
+
+  # trimmed BAM 用于扩增子内部主体区域
+  "${SAMTOOLS_BIN}" mpileup \
+    -aa \
+    -A \
+    -Q "${MIN_BASE_Q}" \
+    -d 0 \
+    -f "${REF_FA}" \
+    -l "${low_amp_bed}" \
+    "${trim_bam}" \
+    > "${trim_mpileup}"
+
+  # 处理 Primer 区域突变
+  "${PYTHON_BIN}" - \
+    "${sample}" \
+    "${low_primer_flank_bed}" \
+    "${raw_mpileup}" \
+    "${primer_mut_tsv}" \
+    "${MIN_DEPTH}" \
+    "${MIN_ALT_FREQ}" \
+    "${MIN_ALT_COUNT}" \
+    primer <<'PY'
+import sys
+
+sample, region_bed, mpileup_tsv, out_tsv, min_depth, min_alt_freq, min_alt_count, mode = sys.argv[1:9]
+min_depth = int(min_depth)
+min_alt_freq = float(min_alt_freq)
+min_alt_count = int(min_alt_count)
+
+pos_info = {}
+
+with open(region_bed, "r", encoding="utf-8") as f:
+    for line in f:
+        cols = line.rstrip("\n").split("\t")
+        chrom = cols[0]
+        start = int(cols[1])
+        end = int(cols[2])
+        primer = cols[3]
+        amp = cols[4]
+        for pos in range(start + 1, end + 1):
+            pos_info[(chrom, pos)] = (amp, primer)
+
+def parse_bases(bases, ref):
+    counts = {"A": 0, "C": 0, "G": 0, "T": 0, "N": 0}
+    i = 0
+    ref = ref.upper()
+
+    while i < len(bases):
+        b = bases[i]
+
+        if b == "^":
+            i += 2
+            continue
+        if b == "$":
+            i += 1
+            continue
+        if b in "+-":
+            i += 1
+            num = ""
+            while i < len(bases) and bases[i].isdigit():
+                num += bases[i]
+                i += 1
+            if num:
+                i += int(num)
+            continue
+
+        if b in ".,=":
+            counts[ref] = counts.get(ref, 0) + 1
+        elif b.upper() in counts:
+            counts[b.upper()] += 1
+
+        i += 1
+
+    return counts
+
+with open(out_tsv, "w", encoding="utf-8") as out:
+    out.write("sample\tamplicon\tregion_type\tprimer\tchrom\tpos\tref_base\tdepth\tA\tC\tG\tT\tN\talt_base\talt_count\talt_freq\tflag\n")
+
+    with open(mpileup_tsv, "r", encoding="utf-8") as f:
+        for line in f:
+            cols = line.rstrip("\n").split("\t")
+            if len(cols) < 5:
+                continue
+
+            chrom = cols[0]
+            pos = int(cols[1])
+            ref = cols[2].upper()
+            depth = int(cols[3])
+            bases = cols[4]
+
+            amp, primer = pos_info.get((chrom, pos), ("NA", "NA"))
+
+            counts = parse_bases(bases, ref)
+
+            alt_items = [(b, c) for b, c in counts.items() if b != ref]
+            alt_base, alt_count = sorted(alt_items, key=lambda x: x[1], reverse=True)[0]
+            alt_freq = alt_count / depth if depth else 0
+
+            if depth < min_depth:
+                flag = "LOW_DEPTH"
+            elif alt_freq >= min_alt_freq and alt_count >= min_alt_count:
+                flag = "MUTATION"
+            else:
+                flag = "PASS"
+
+            if flag != "PASS":
+                out.write(
+                    f"{sample}\t{amp}\tprimer_flank\t{primer}\t{chrom}\t{pos}\t{ref}\t{depth}\t"
+                    f"{counts['A']}\t{counts['C']}\t{counts['G']}\t{counts['T']}\t{counts['N']}\t"
+                    f"{alt_base}\t{alt_count}\t{alt_freq:.4f}\t{flag}\n"
+                )
+PY
+
+  # 处理 Body 区域突变与低深度
+  "${PYTHON_BIN}" - \
+    "${sample}" \
+    "${low_amp_bed}" \
+    "${trim_mpileup}" \
+    "${body_mut_tsv}" \
+    "${MIN_DEPTH}" \
+    "${MIN_ALT_FREQ}" \
+    "${MIN_ALT_COUNT}" <<'PY'
+import sys
+
+sample, region_bed, mpileup_tsv, out_tsv, min_depth, min_alt_freq, min_alt_count = sys.argv[1:8]
+min_depth = int(min_depth)
+min_alt_freq = float(min_alt_freq)
+min_alt_count = int(min_alt_count)
+
+pos_amp = {}
+
+with open(region_bed, "r", encoding="utf-8") as f:
+    for line in f:
+        cols = line.rstrip("\n").split("\t")
+        chrom = cols[0]
+        start = int(cols[1])
+        end = int(cols[2])
+        amp = cols[3]
+        for pos in range(start + 1, end + 1):
+            pos_amp[(chrom, pos)] = amp
+
+def parse_bases(bases, ref):
+    counts = {"A": 0, "C": 0, "G": 0, "T": 0, "N": 0}
+    i = 0
+    ref = ref.upper()
+
+    while i < len(bases):
+        b = bases[i]
+
+        if b == "^":
+            i += 2
+            continue
+        if b == "$":
+            i += 1
+            continue
+        if b in "+-":
+            i += 1
+            num = ""
+            while i < len(bases) and bases[i].isdigit():
+                num += bases[i]
+                i += 1
+            if num:
+                i += int(num)
+            continue
+
+        if b in ".,=":
+            counts[ref] = counts.get(ref, 0) + 1
+        elif b.upper() in counts:
+            counts[b.upper()] += 1
+
+        i += 1
+
+    return counts
+
+with open(out_tsv, "w", encoding="utf-8") as out:
+    out.write("sample\tamplicon\tchrom\tpos\tref_base\tdepth\tA\tC\tG\tT\tN\talt_base\talt_count\talt_freq\tflag\n")
+
+    with open(mpileup_tsv, "r", encoding="utf-8") as f:
+        for line in f:
+            cols = line.rstrip("\n").split("\t")
+            if len(cols) < 5:
+                continue
+
+            chrom = cols[0]
+            pos = int(cols[1])
+            ref = cols[2].upper()
+            depth = int(cols[3])
+            bases = cols[4]
+
+            amp = pos_amp.get((chrom, pos), "NA")
+            counts = parse_bases(bases, ref)
+
+            alt_items = [(b, c) for b, c in counts.items() if b != ref]
+            alt_base, alt_count = sorted(alt_items, key=lambda x: x[1], reverse=True)[0]
+            alt_freq = alt_count / depth if depth else 0
+
+            if depth < min_depth:
+                flag = "LOW_DEPTH"
+            elif alt_freq >= min_alt_freq and alt_count >= min_alt_count:
+                flag = "MUTATION"
+            else:
+                flag = "PASS"
+
+            # 核心修改：将 flag == "MUTATION" 改为 flag != "PASS"，把 LOW_DEPTH 也输出
+            if flag != "PASS":
+                out.write(
+                    f"{sample}\t{amp}\t{chrom}\t{pos}\t{ref}\t{depth}\t"
+                    f"{counts['A']}\t{counts['C']}\t{counts['G']}\t{counts['T']}\t{counts['N']}\t"
+                    f"{alt_base}\t{alt_count}\t{alt_freq:.4f}\t{flag}\n"
+                )
+PY
+
+  # 归因诊断模块
+  "${PYTHON_BIN}" - \
+    "${sample}" \
+    "${LOW_TSV}" \
+    "${primer_mut_tsv}" \
+    "${body_mut_tsv}" \
+    "${diagnosis_tsv}" <<'PY'
+import csv
+import sys
+from collections import defaultdict
+
+sample, low_tsv, primer_tsv, body_tsv, out_tsv = sys.argv[1:6]
+
+amp_status = {}
+
+with open(low_tsv, "r", encoding="utf-8-sig") as f:
+    reader = csv.DictReader(f, delimiter="\t")
+    for r in reader:
+        # 兼容大小写表头
+        s_val = r.get("sample") or r.get("Sample")
+        st_val = r.get("status") or r.get("Status")
+        amp_val = r.get("amplicon") or r.get("Amplicon")
+        if s_val == sample and st_val in {"LOW", "WARNING"}:
+            amp_status[amp_val] = st_val
+
+primer_mut = defaultdict(int)
+primer_low = defaultdict(int)
+body_mut = defaultdict(int)
+body_low = defaultdict(int)
+
+with open(primer_tsv, "r", encoding="utf-8") as f:
+    reader = csv.DictReader(f, delimiter="\t")
+    for r in reader:
+        amp = r["amplicon"]
+        if r["flag"] == "MUTATION":
+            primer_mut[amp] += 1
+        elif r["flag"] == "LOW_DEPTH":
+            primer_low[amp] += 1
+
+with open(body_tsv, "r", encoding="utf-8") as f:
+    reader = csv.DictReader(f, delimiter="\t")
+    for r in reader:
+        amp = r["amplicon"]
+        if r["flag"] == "MUTATION":
+            body_mut[amp] += 1
+        elif r["flag"] == "LOW_DEPTH":
+            body_low[amp] += 1
+
+with open(out_tsv, "w", encoding="utf-8") as out:
+    out.write("sample\tamplicon\tstatus\tprimer_region_mutation_sites\tbody_mutation_sites\tlow_depth_primer_sites\tdiagnosis\n")
+
+    def extract_num(text):
+        m = re.search(r"(\d+)", text)
+        return int(m.group(1)) if m else 0
+
+    import re
+    for amp in sorted(amp_status, key=extract_num):
+        pm = primer_mut[amp]
+        bm = body_mut[amp]
+        pl = primer_low[amp]
+        bl = body_low[amp]
+
+        if pm > 0:
+            diagnosis = "possible_primer_binding_region_mutation"
+        elif bm > 0:
+            diagnosis = "body_mutation_detected_but_not_primer_region"
+        elif pl > 0 or bl > 0:
+            diagnosis = "primer_region_low_depth_or_amplicon_failure"
+        else:
+            diagnosis = "no_obvious_mutation_signal"
+
+        out.write(f"{sample}\t{amp}\t{amp_status[amp]}\t{pm}\t{bm}\t{pl}\t{diagnosis}\n")
+PY
+
+  tail -n +2 "${primer_mut_tsv}" >> "${ALL_PRIMER_MUT}"
+  tail -n +2 "${body_mut_tsv}" >> "${ALL_BODY_MUT}"
+  tail -n +2 "${diagnosis_tsv}" >> "${ALL_DIAGNOSIS}"
+
+  echo "[INFO] finished ${sample}"
+done < "${SAMPLE_LIST}"
+
+echo "[INFO] primer region mutations: ${ALL_PRIMER_MUT}"
+echo "[INFO] body mutations: ${ALL_BODY_MUT}"
+echo "[INFO] diagnosis: ${ALL_DIAGNOSIS}"
+echo "喵喵喵"
