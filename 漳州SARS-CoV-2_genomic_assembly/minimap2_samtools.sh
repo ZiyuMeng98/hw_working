@@ -3,17 +3,16 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-SAMPLE_LIST="${SAMPLE_LIST:-${SCRIPT_DIR}/samples.txt}"
+SAMPLE_LIST="/home/mzy/working/20260812_SARS_Cov/samples.txt"
 
-REF_FA="/home/mzy/working/20260730_20260723_12sample_XG/ref/references/MN908947.3.fa"
-REF_MMI="/home/mzy/working/20260730_20260723_12sample_XG/ref/references/mn908947_3.mmi"
+REF_FA="/home/mzy/reference/MN908947.3/MN908947.3.fa"
+REF_MMI="/home/mzy/reference/MN908947.3/MN908947_3.mmi"
 
-IN_ROOT="${IN_ROOT:-${SCRIPT_DIR}/01.artic_guppyplex}"
-OUT_ROOT="${OUT_ROOT:-${SCRIPT_DIR}/02.minimap2}"
-LOG_ROOT="${LOG_ROOT:-${SCRIPT_DIR}/logs/02.minimap2}"
+IN_ROOT="/home/mzy/working/20260812_SARS_Cov/01.artic_guppyplex"
+OUT_ROOT="/home/mzy/working/20260812_SARS_Cov/02.minimap2"
+LOG_ROOT="/home/mzy/working/20260812_SARS_Cov/logs/02.minimap2"
 
 MIN_LEN="${MIN_LEN:-300}"
-MAX_LEN="${MAX_LEN:-700}"
 THREADS="${THREADS:-8}"
 
 # 直接调用各环境中的程序，避免在管道中反复启动 conda
@@ -66,7 +65,7 @@ while IFS= read -r sample || [[ -n "${sample}" ]]; do
     sample="${sample%$'\r'}"
     [[ -z "${sample}" || "${sample}" =~ ^# ]] && continue
 
-    fq="${IN_ROOT}/${sample}/${sample}.artic_guppyplex.min${MIN_LEN}.max${MAX_LEN}.fastq.gz"
+    fq="${IN_ROOT}/${sample}/${sample}.artic_guppyplex.min${MIN_LEN}.fastq.gz"
     outdir="${OUT_ROOT}/${sample}"
     bam="${outdir}/${sample}.raw.sorted.bam"
     tmp_bam="${outdir}/${sample}.raw.sorted.tmp.bam"
