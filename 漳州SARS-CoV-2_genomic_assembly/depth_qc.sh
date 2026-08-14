@@ -250,4 +250,3 @@ awk 'NR == 1 || $12 == "LOW" || $12 == "WARNING"' "${ALL_SUMMARY}" > "${LOW_SUMM
 
 echo "[INFO] amplicon summary: ${ALL_SUMMARY}"
 echo "[INFO] low/warning amplicons: ${LOW_SUMMARY}"
-echo "喵喵喵"
