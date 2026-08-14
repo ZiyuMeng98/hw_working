@@ -3,13 +3,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-RAW_ROOT="${RAW_ROOT:-00.raw_data}"
-OUT_ROOT="${OUT_ROOT:-.}"
-SAMPLE_LIST="${SAMPLE_LIST:-${SCRIPT_DIR}/samples.txt}"
+RAW_ROOT="/home/mzy/working/20260812_SARS_Cov/00.raw_data"
+OUT_ROOT="/home/mzy/working/20260812_SARS_Cov"
+SAMPLE_LIST="/home/mzy/working/20260812_SARS_Cov/samples.txt"
 
 MIN_LEN="${MIN_LEN:-300}"
-MAX_LEN="${MAX_LEN:-700}"
-QUALITY="${QUALITY:-7}"
+QUALITY="${QUALITY:-10}"
 THREADS="${THREADS:-8}"
 SKIP_QUALITY_CHECK="${SKIP_QUALITY_CHECK:-0}"
 
@@ -19,7 +18,7 @@ SUMMARY="${GUPPYPLEX_DIR}/guppyplex_summary.tsv"
 
 mkdir -p "${GUPPYPLEX_DIR}" "${LOG_DIR}"
 
-printf "sample\traw_dir\tfastq_count\toutput_fastq\tmin_len\tmax_len\tquality\tstatus\n" > "${SUMMARY}"
+printf "sample\traw_dir\tfastq_count\toutput_fastq\tmin_len\tquality\tstatus\n" > "${SUMMARY}"
 
 while IFS= read -r sample || [[ -n "${sample}" ]]; do
   [[ -z "${sample}" || "${sample}" =~ ^# ]] && continue
@@ -27,14 +26,14 @@ while IFS= read -r sample || [[ -n "${sample}" ]]; do
   raw_dir="${RAW_ROOT}/${sample}"
   sample_out_dir="${GUPPYPLEX_DIR}/${sample}"
   sample_log_dir="${LOG_DIR}/${sample}"
-  output_fastq="${sample_out_dir}/${sample}.artic_guppyplex.min${MIN_LEN}.max${MAX_LEN}.fastq.gz"
+  output_fastq="${sample_out_dir}/${sample}.artic_guppyplex.min${MIN_LEN}.fastq.gz"
   log_file="${sample_log_dir}/${sample}.guppyplex.log"
 
   mkdir -p "${sample_out_dir}" "${sample_log_dir}"
 
   if [[ ! -d "${raw_dir}" ]]; then
     printf "%s\t%s\t0\t%s\t%s\t%s\t%s\tMISSING_RAW_DIR\n" \
-      "${sample}" "${raw_dir}" "${output_fastq}" "${MIN_LEN}" "${MAX_LEN}" "${QUALITY}" >> "${SUMMARY}"
+      "${sample}" "${raw_dir}" "${output_fastq}" "${MIN_LEN}" "${QUALITY}" >> "${SUMMARY}"
     echo "[ERROR] ${raw_dir} does not exist" >&2
     exit 1
   fi
@@ -47,7 +46,7 @@ while IFS= read -r sample || [[ -n "${sample}" ]]; do
 
   if [[ "${fastq_count}" -eq 0 ]]; then
     printf "%s\t%s\t0\t%s\t%s\t%s\t%s\tNO_FASTQ\n" \
-      "${sample}" "${raw_dir}" "${output_fastq}" "${MIN_LEN}" "${MAX_LEN}" "${QUALITY}" >> "${SUMMARY}"
+      "${sample}" "${raw_dir}" "${output_fastq}" "${MIN_LEN}" "${QUALITY}" >> "${SUMMARY}"
     echo "[ERROR] no FASTQ files found in ${raw_dir}" >&2
     exit 1
   fi
@@ -56,7 +55,6 @@ while IFS= read -r sample || [[ -n "${sample}" ]]; do
     conda run -n artic_guppyplex_env artic guppyplex
     --directory "${raw_dir}"
     --min-length "${MIN_LEN}"
-    --max-length "${MAX_LEN}"
     --quality "${QUALITY}"
     --output "${output_fastq}"
     --threads "${THREADS}"
@@ -74,17 +72,17 @@ while IFS= read -r sample || [[ -n "${sample}" ]]; do
   if "${cmd[@]}" >> "${log_file}" 2>&1; then
     if [[ ! -s "${output_fastq}" ]]; then
       printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\tEMPTY_OUTPUT\n" \
-        "${sample}" "${raw_dir}" "${fastq_count}" "${output_fastq}" "${MIN_LEN}" "${MAX_LEN}" "${QUALITY}" >> "${SUMMARY}"
+        "${sample}" "${raw_dir}" "${fastq_count}" "${output_fastq}" "${MIN_LEN}" "${QUALITY}" >> "${SUMMARY}"
       echo "[ERROR] ${output_fastq} is empty; check ${log_file}" >&2
       exit 1
     fi
 
     # 每个样本独立记录输出路径，后续比对步骤直接读取该文件即可。
     printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\tOK\n" \
-      "${sample}" "${raw_dir}" "${fastq_count}" "${output_fastq}" "${MIN_LEN}" "${MAX_LEN}" "${QUALITY}" >> "${SUMMARY}"
+      "${sample}" "${raw_dir}" "${fastq_count}" "${output_fastq}" "${MIN_LEN}" "${QUALITY}" >> "${SUMMARY}"
   else
     printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\tFAILED\n" \
-      "${sample}" "${raw_dir}" "${fastq_count}" "${output_fastq}" "${MIN_LEN}" "${MAX_LEN}" "${QUALITY}" >> "${SUMMARY}"
+      "${sample}" "${raw_dir}" "${fastq_count}" "${output_fastq}" "${MIN_LEN}" "${QUALITY}" >> "${SUMMARY}"
     echo "[ERROR] guppyplex failed for ${sample}; check ${log_file}" >&2
     exit 1
   fi
