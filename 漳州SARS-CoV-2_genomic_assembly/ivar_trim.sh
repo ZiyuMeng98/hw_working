@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SAMPLE="barcode129"
+SAMPLE="YBCX2026XG180"
 
-RAW_BAM="02.minimap2/${SAMPLE}/${SAMPLE}.raw.sorted.bam"
-PRIMER_BED="/home/mzy/working/20260730_20260723_12sample_XG/SARS-CoV-2_V5.4.2.primer.bed"
-OUT_DIR="03.ivar_trim/${SAMPLE}"
+RAW_BAM="/home/mzy/working/20260812_SARS_Cov/02.minimap2/${SAMPLE}/${SAMPLE}.raw.sorted.bam"
+PRIMER_BED="/home/mzy/working/20260730_20260723_12sample_XG/SARS_CoV_V5.4.2_new.bed"
+OUT_DIR="/home/mzy/working/20260812_SARS_Cov/03.ivar_trim/${SAMPLE}"
 
 IVAR_BIN="/home/mzy/.conda/envs/covid_amplicon/bin/ivar"
 SAMTOOLS_BIN="/home/mzy/.conda/envs/covid_amplicon/bin/samtools"
