@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+mkdir -p 09.mutation_read_support
+# 查看 primer 区域突变支持 reads 数
+awk -F'\t' '
+NR==1{
+  for(i=1;i<=NF;i++) h[$i]=i;
+  print "sample\tamplicon\tregion\tprimer\tpos\tref_base\talt_base\tdepth\talt_count\talt_freq";
+  next
+}
+$NF=="MUTATION"{
+  print $h["sample"]"\t"$h["amplicon"]"\tprimer_region\t"$h["primer"]"\t"$h["pos"]"\t"$h["ref_base"]"\t"$h["alt_base"]"\t"$h["depth"]"\t"$h["alt_count"]"\t"$h["alt_freq"]
+}' 08.low_amplicon_mutation_qc/all_samples.low_amplicon_primer_region_mutations.tsv \
+> 09.mutation_read_support/primer_region_mutation_read_support.tsv
+# 查看扩增子 body 内部突变支持 reads 数
+awk -F'\t' '
+NR==1{
+  for(i=1;i<=NF;i++) h[$i]=i;
+  print "sample\tamplicon\tregion\tprimer\tpos\tref_base\talt_base\tdepth\talt_count\talt_freq";
+  next
+}
+$NF=="MUTATION"{
+  print $h["sample"]"\t"$h["amplicon"]"\tbody\tNA\t"$h["pos"]"\t"$h["ref_base"]"\t"$h["alt_base"]"\t"$h["depth"]"\t"$h["alt_count"]"\t"$h["alt_freq"]
+}' 08.low_amplicon_mutation_qc/all_samples.low_amplicon_body_mutations.tsv \
+> 09.mutation_read_support/body_mutation_read_support.tsv
+# 合并成一个总表
+head -n 1 09.mutation_read_support/primer_region_mutation_read_support.tsv \
+> 09.mutation_read_support/all_mutation_read_support.tsv
+
+tail -n +2 09.mutation_read_support/primer_region_mutation_read_support.tsv \
+>> 09.mutation_read_support/all_mutation_read_support.tsv
+
+tail -n +2 09.mutation_read_support/body_mutation_read_support.tsv \
+>> 09.mutation_read_support/all_mutation_read_support.tsv  
