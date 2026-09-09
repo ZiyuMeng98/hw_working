@@ -6,7 +6,7 @@ for i in $(cat samples.txt); do SAMPLE="$i" bash ivar_trim.sh 2>&1 | tee "logs/i
 bash ~/script/amplicon_genome_qc/depth_qc.sh 2>&1 | tee logs/depth_qc.log
 bash ~/script/amplicon_genome_qc/primer_site_qc.sh 2>&1 | tee logs/primer_site_qc.log
 bash ~/script/amplicon_genome_qc/consensus.sh 2>&1 | tee logs/consensus.log
-bash ~/script/ consensus_medaka_polish.sh 2>&1 | tee logs/consensus_medaka_polish.log
+~/script/amplicon_genome_qc/consensus_medaka_polish.sh 2>&1 | tee logs/consensus_medaka_polish.log
 bash ~/script/amplicon_genome_qc/final_qc.sh 2>&1 | tee logs/final_qc.log
 bash ~/script/amplicon_genome_qc/low_amplicon_mutation_qc.sh 2>&1 | tee logs/low_amplicon_mutation_qc.log
 bash ~/script/amplicon_genome_qc/mutation_read_support.sh 2>&1 | tee logs/mutation_read_support.log
