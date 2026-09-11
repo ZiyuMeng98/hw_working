@@ -10,13 +10,13 @@ OUT_DIR="$WORK_DIR/03.minimap2"
 mkdir -p "$OUT_DIR"
 
 # 3. 遍历 09.cutadapt 目录下所有 trimmed.fastq.gz 文件
-for fq in "$INPUT_DIR"/*.trimmed.fastq.gz; do
+for fq in "$INPUT_DIR"/*.filter.fastq.gz; do
     # 检查文件是否存在
     [ -f "$fq" ] || continue
 
     # 获取文件名（例如：FBH75672_3）
     filename=$(basename "$fq")
-    SAMPLE_ID="${filename%.trimmed.fastq.gz}"
+    SAMPLE_ID="${filename%.filter.fastq.gz}"
 
     echo "=========================================="
     echo "=== 正在处理样本比对与排序: ${SAMPLE_ID} ==="
